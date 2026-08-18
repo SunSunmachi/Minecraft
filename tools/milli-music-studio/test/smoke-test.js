@@ -96,6 +96,15 @@ const testCode = `
     $("btnPlay").onclick(); $("btnStop").onclick();
     check("再生/停止が例外なく動作", true);
 
+    // 新機能: 再生状態の表示・再生ヘッド・時間表示・音符追加（同一スコープで直接参照）
+    $("btnPlay").onclick();
+    check("再生中表示になる", $("btnPlay").textContent.indexOf("再生中") >= 0);
+    addNoteAt(100, 100);
+    check("タップで音符追加（音程が範囲内）", selected !== null && selected.note.pitch >= 0 && selected.note.pitch <= 127);
+    $("btnStop").onclick();
+    check("停止で再生ボタンが戻る", $("btnPlay").textContent === "▶ 再生", $("btnPlay").textContent);
+    check("停止後に時間表示リセット", $("playTime").textContent.indexOf("0:00 /") === 0, $("playTime").textContent);
+
     refreshPartList();
     check("パートリスト描画（例外なし）", true);
 
