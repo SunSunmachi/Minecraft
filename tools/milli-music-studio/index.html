@@ -1,0 +1,916 @@
+<!DOCTYPE html>
+<html lang="ja">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Milli Music Studio</title>
+<style>
+  :root {
+    --bg: #12141c; --panel: #1b1e2a; --panel2: #232738; --line: #2e3348;
+    --text: #e6e9f2; --dim: #9aa3bd; --accent: #5b8cff; --warn: #ffb454;
+    --err: #ff6b6b; --ok: #4cd97b;
+  }
+  * { box-sizing: border-box; }
+  body { margin: 0; background: var(--bg); color: var(--text); font-family: "Hiragino Sans", "Noto Sans JP", sans-serif; font-size: 14px; }
+  header { display: flex; align-items: center; gap: 12px; padding: 10px 16px; background: var(--panel); border-bottom: 1px solid var(--line); flex-wrap: wrap; }
+  header h1 { font-size: 16px; margin: 0; }
+  header .grow { flex: 1; }
+  .btn { background: var(--panel2); color: var(--text); border: 1px solid var(--line); border-radius: 6px; padding: 6px 12px; cursor: pointer; font-size: 13px; }
+  .btn:hover { border-color: var(--accent); }
+  .btn.primary { background: var(--accent); border-color: var(--accent); color: #fff; }
+  .btn.small { padding: 3px 8px; font-size: 12px; }
+  input[type=text], input[type=number], select { background: var(--panel2); color: var(--text); border: 1px solid var(--line); border-radius: 6px; padding: 5px 8px; font-size: 13px; }
+  input[type=color] { width: 34px; height: 26px; border: 1px solid var(--line); border-radius: 6px; background: none; padding: 0; }
+  .tabs { display: flex; gap: 4px; padding: 8px 16px 0; }
+  .tab { padding: 7px 16px; border: 1px solid var(--line); border-bottom: none; border-radius: 8px 8px 0 0; background: var(--panel); cursor: pointer; color: var(--dim); }
+  .tab.active { background: var(--panel2); color: var(--text); }
+  main { padding: 12px 16px 40px; }
+  .panel { background: var(--panel); border: 1px solid var(--line); border-radius: 8px; padding: 12px; margin-bottom: 12px; }
+  .panel h2 { font-size: 14px; margin: 0 0 8px; color: var(--accent); }
+  .row { display: flex; gap: 8px; align-items: center; flex-wrap: wrap; margin-bottom: 8px; }
+  .note-table { width: 100%; border-collapse: collapse; font-size: 12px; }
+  .note-table th, .note-table td { border: 1px solid var(--line); padding: 4px 8px; text-align: left; }
+  .note-table tr.selected { background: rgba(91,140,255,.18); }
+  .drop-zone { border: 2px dashed var(--line); border-radius: 8px; padding: 18px; text-align: center; color: var(--dim); margin-bottom: 10px; cursor: pointer; }
+  .drop-zone.over { border-color: var(--accent); color: var(--text); }
+  #status { margin: 8px 0; color: var(--dim); min-height: 18px; }
+  #warnings { color: var(--warn); white-space: pre-wrap; }
+  #errors { color: var(--err); white-space: pre-wrap; }
+  #canvasWrap { overflow: auto; border: 1px solid var(--line); border-radius: 8px; background: var(--panel2); }
+  canvas { display: block; cursor: crosshair; }
+  textarea { width: 100%; height: 200px; background: var(--panel2); color: var(--text); border: 1px solid var(--line); border-radius: 6px; padding: 8px; font-family: monospace; font-size: 12px; }
+  .grid2 { display: grid; grid-template-columns: repeat(auto-fill, minmax(220px, 1fr)); gap: 10px; }
+  .field { display: flex; flex-direction: column; gap: 4px; }
+  .field label { font-size: 12px; color: var(--dim); }
+  .part-row { display: grid; grid-template-columns: 1fr 1.4fr 70px 110px 40px; gap: 8px; align-items: center; padding: 6px 0; border-bottom: 1px solid var(--line); }
+  .part-row.head { color: var(--dim); font-size: 12px; }
+  .file-tabs { display: flex; gap: 4px; flex-wrap: wrap; margin: 8px 0; }
+  .file-tab { padding: 4px 10px; border: 1px solid var(--line); border-radius: 6px; cursor: pointer; font-size: 12px; color: var(--dim); }
+  .file-tab.active { color: var(--text); border-color: var(--accent); }
+  .hidden { display: none; }
+  .note-line { display: flex; gap: 6px; align-items: center; padding: 3px 0; }
+</style>
+</head>
+<body>
+
+<header>
+  <h1>🎵 Milli Music Studio</h1>
+  <input type="text" id="projectName" placeholder="プロジェクト名" style="width:200px">
+  <span class="grow"></span>
+  <button class="btn" id="btnImportMidi">MIDI読み込み</button>
+  <input type="file" id="midiFile" accept=".mid,.midi,audio/midi" class="hidden">
+  <button class="btn" id="btnSaveJson">プロジェクト保存</button>
+  <button class="btn" id="btnLoadJson">プロジェクト読込</button>
+  <input type="file" id="jsonFile" accept=".json" class="hidden">
+</header>
+
+<div class="tabs">
+  <button class="tab active" data-tab="editor">音符エディタ</button>
+  <button class="tab" data-tab="sounds">音色設定</button>
+  <button class="tab" data-tab="convert">変換設定</button>
+  <button class="tab" data-tab="export">出力</button>
+</div>
+
+<main>
+  <!-- ================= エディタ ================= -->
+  <section id="tab-editor">
+    <div class="panel">
+      <div class="drop-zone" id="dropZone">MIDIファイルをドロップするか、上の「MIDI読み込み」を押してください<br><small>（MIDIの入手方法はREADME参照。REAPER等で作る／ネット上の配布MIDI）</small></div>
+      <div class="row">
+        <button class="btn primary" id="btnPlay">▶ 再生</button>
+        <button class="btn" id="btnStop">■ 停止</button>
+        <select id="gridSel" title="スナップのグリッド">
+          <option value="4">1/4音符</option>
+          <option value="8">1/8音符</option>
+          <option value="16" selected>1/16音符</option>
+          <option value="32">1/32音符</option>
+        </select>
+        <button class="btn" id="btnQuantize">グリッドに整列</button>
+        <span class="grow" style="flex:1"></span>
+        <button class="btn" id="btnZoomIn">+</button>
+        <button class="btn" id="btnZoomOut">−</button>
+        <button class="btn" id="btnFit">全体表示</button>
+      </div>
+      <div id="status"></div>
+      <div id="canvasWrap"><canvas id="cv" width="900" height="520"></canvas></div>
+      <div id="hint" style="margin-top:6px;color:var(--dim);font-size:12px">
+        ダブルクリック：音符追加 ／ ドラッグ：音符移動（右端で長さ変更）／ 空白ドラッグ：スクロール ／ ホイール：ズーム ／ Delete：削除
+      </div>
+    </div>
+    <div class="panel">
+      <h2>選択中の音符</h2>
+      <div class="note-line">
+        <span>パート</span><select id="selPart"></select>
+        <span>音程</span><input type="number" id="selPitch" min="0" max="127" style="width:70px"><span id="selPitchName" style="color:var(--dim)"></span>
+        <span>開始(秒)</span><input type="number" id="selStart" step="0.01" style="width:80px">
+        <span>長さ(tick)</span><input type="number" id="selLen" min="1" style="width:90px">
+        <button class="btn small" id="btnAddNote">+ 追加</button>
+        <button class="btn small" id="btnDupNote">複製</button>
+        <button class="btn small" id="btnDelNote">削除</button>
+      </div>
+      <div style="max-height:220px;overflow:auto">
+        <table class="note-table" id="noteTable">
+          <thead><tr><th>#</th><th>パート</th><th>音名</th><th>開始(tick)</th><th>開始(秒)</th><th>長さ(tick)</th><th>強さ</th></tr></thead>
+          <tbody></tbody>
+        </table>
+      </div>
+    </div>
+  </section>
+
+  <!-- ================= 音色設定 ================= -->
+  <section id="tab-sounds" class="hidden">
+    <div class="panel">
+      <h2>パートごとの音色設定</h2>
+      <div class="part-row head">
+        <span>パート名</span><span>サウンド名（リソースパックで定義）</span><span>基準音</span><span>色</span><span></span>
+      </div>
+      <div id="partList"></div>
+      <div style="margin-top:10px;color:var(--dim);font-size:12px">
+        サウンド名は <code>ms.sound.メロディ</code> のようなカスタム名です。基準音＝サンプル音源の元の音程（MIDIノート番号、C4=60）。
+      </div>
+    </div>
+  </section>
+
+  <!-- ================= 変換設定 ================= -->
+  <section id="tab-convert" class="hidden">
+    <div class="panel">
+      <h2>変換設定</h2>
+      <div class="grid2">
+        <div class="field"><label>移調（半音数）</label><input type="number" id="cfgTranspose" value="0"></div>
+        <div class="field"><label>最短音符長（ミリ秒、これ未満は除外）</label><input type="number" id="cfgMinLen" value="80" min="0"></div>
+        <div class="field"><label>音域下限（MIDIノート番号）</label><input type="number" id="cfgMinPitch" value="0" min="0" max="127"></div>
+        <div class="field"><label>音域上限（MIDIノート番号）</label><input type="number" id="cfgMaxPitch" value="127" min="0" max="127"></div>
+        <div class="field"><label>ループ再生</label><select id="cfgLoop"><option value="1">する</option><option value="0" selected>しない</option></select></div>
+      </div>
+    </div>
+  </section>
+
+  <!-- ================= 出力 ================= -->
+  <section id="tab-export" class="hidden">
+    <div class="panel">
+      <h2>出力（Minecraft用 Add-On）</h2>
+      <div class="row">
+        <button class="btn primary" id="btnBuild">変換を実行</button>
+        <button class="btn" id="btnZip">ZIPでダウンロード</button>
+      </div>
+      <div id="exportSummary" style="color:var(--dim)"></div>
+      <div id="warnings"></div>
+      <div id="errors"></div>
+      <div class="file-tabs" id="fileTabs"></div>
+      <textarea id="fileView" readonly></textarea>
+      <div style="margin-top:8px;color:var(--dim);font-size:12px">
+        ZIPの中身は「RP（リソースパック）＋BP（ビヘイビアパック）」の2パック構成です。
+        サンプル音源ファイルは RP/sounds/ に配置してください（sounds/README.txt 参照）。
+        Minecraftで使う手順は README.md を参照。
+      </div>
+    </div>
+  </section>
+</main>
+
+<script src="mms-core.js"></script>
+<script>
+"use strict";
+/* =========================================================
+ * 状態管理
+ * ========================================================= */
+const PALETTE = ["#ff6b6b", "#4cd97b", "#5b8cff", "#ffb454", "#c792ea", "#4dd0e1", "#f48fb1", "#aed581"];
+
+function slug(s) {
+  return s.toLowerCase().replace(/[^a-z0-9_]+/g, "_").replace(/^_+|_+$/g, "") || "part";
+}
+
+function newProject(name) {
+  return {
+    name: name || "MySong",
+    division: 480,
+    tempoMap: [{ tick: 0, bpm: 120 }],
+    timeSig: { num: 4, den: 4 },
+    parts: [{
+      id: "p1", name: "メロディ", channel: 0,
+      sound: "ms.sound.melody", rootNote: 60, color: PALETTE[0],
+      notes: []
+    }],
+    totalTicks: 0
+  };
+}
+
+let project = newProject("MySong");
+let selected = null; // {part, note}
+
+const gridSel = document.getElementById("gridSel");
+const cv = document.getElementById("cv");
+const ctx = cv.getContext("2d");
+const view = { pxPerTick: 0.5, startTick: 0, rowH: 12 };
+
+const $ = (id) => document.getElementById(id);
+
+/* =========================================================
+ * MIDI読み込み
+ * ========================================================= */
+function applyMidiParse(result, fileName) {
+  project.name = (fileName || "MySong").replace(/\.midi?$/i, "");
+  project.division = result.division;
+  project.tempoMap = result.tempoMap;
+  project.timeSig = result.timeSig;
+  project.totalTicks = result.totalTicks;
+  project.parts = result.tracks.map((t, i) => ({
+    id: "p" + (i + 1),
+    name: t.name,
+    channel: t.channel,
+    sound: "ms.sound." + slug(t.name),
+    rootNote: 60,
+    color: PALETTE[i % PALETTE.length],
+    notes: t.notes
+  }));
+  selected = null;
+  $("projectName").value = project.name;
+  const noteCount = project.parts.reduce((s, p) => s + p.notes.length, 0);
+  setStatus(
+    "読み込み完了: " + project.name +
+    " / パート " + project.parts.length +
+    " / 音符 " + noteCount +
+    " / 曲長 " + MMS.formatSeconds(MMS.ticksToSeconds(project.totalTicks, project.tempoMap, project.division))
+  );
+  if (result.errors.length) $("errors").textContent = "警告: " + result.errors.join("\n");
+  else $("errors").textContent = "";
+  fitView();
+  drawAll();
+}
+
+$("btnImportMidi").onclick = () => $("midiFile").click();
+$("midiFile").onchange = (e) => {
+  const f = e.target.files[0];
+  if (!f) return;
+  f.arrayBuffer().then((buf) => {
+    try {
+      applyMidiParse(MMS.parseMidi(new Uint8Array(buf)), f.name);
+    } catch (err) {
+      $("errors").textContent = "読み込みエラー: " + err.message;
+    }
+  });
+};
+
+const dz = $("dropZone");
+dz.onclick = () => $("midiFile").click();
+dz.ondragover = (e) => { e.preventDefault(); dz.classList.add("over"); };
+dz.ondragleave = () => dz.classList.remove("over");
+dz.ondrop = (e) => {
+  e.preventDefault();
+  dz.classList.remove("over");
+  const f = [...e.dataTransfer.files].find((x) => /\.midi?$/i.test(x.name));
+  if (!f) { $("errors").textContent = "MIDIファイル(.mid)をドロップしてください"; return; }
+  f.arrayBuffer().then((buf) => {
+    try {
+      applyMidiParse(MMS.parseMidi(new Uint8Array(buf)), f.name);
+    } catch (err) {
+      $("errors").textContent = "読み込みエラー: " + err.message;
+    }
+  });
+};
+
+/* =========================================================
+ * プロジェクト保存 / 読込
+ * ========================================================= */
+function downloadBlob(name, data, mime) {
+  const a = document.createElement("a");
+  a.href = URL.createObjectURL(new Blob([data], { type: mime || "application/octet-stream" }));
+  a.download = name;
+  a.click();
+  setTimeout(() => URL.revokeObjectURL(a.href), 5000);
+}
+
+$("btnSaveJson").onclick = () => {
+  downloadBlob((project.name || "project") + ".mms.json", JSON.stringify(project, null, 2), "application/json");
+};
+$("btnLoadJson").onclick = () => $("jsonFile").click();
+$("jsonFile").onchange = (e) => {
+  const f = e.target.files[0];
+  if (!f) return;
+  f.text().then((txt) => {
+    try {
+      project = JSON.parse(txt);
+      if (!project.parts) throw new Error("形式が不正です");
+      $("projectName").value = project.name || "MySong";
+      selected = null;
+      setStatus("プロジェクトを読み込みました: " + project.name);
+      $("errors").textContent = "";
+      fitView();
+      drawAll();
+    } catch (err) {
+      $("errors").textContent = "読込エラー: " + err.message;
+    }
+  });
+};
+
+let saveTimer = null;
+function autosave() {
+  clearTimeout(saveTimer);
+  saveTimer = setTimeout(() => {
+    try { localStorage.setItem("mms-project", JSON.stringify(project)); } catch (e) {}
+  }, 400);
+}
+(function () {
+  try {
+    const raw = localStorage.getItem("mms-project");
+    if (raw) {
+      const p = JSON.parse(raw);
+      if (p && p.parts) { project = p; $("projectName").value = p.name || "MySong"; }
+    }
+  } catch (e) {}
+})();
+
+/* =========================================================
+ * ビュー操作
+ * ========================================================= */
+function division() { return project.division || 480; }
+function gridTicks() {
+  const d = +gridSel.value;
+  return Math.max(1, Math.round((division() * 4) / d));
+}
+function fitView() {
+  const maxT = project.totalTicks || division() * 4;
+  view.startTick = 0;
+  view.pxPerTick = Math.max(0.01, cv.width / maxT);
+}
+$("btnZoomIn").onclick = () => {
+  const c = cv.width / 2;
+  const tickAt = view.startTick + c / view.pxPerTick;
+  view.pxPerTick *= 1.6;
+  view.startTick = Math.max(0, tickAt - c / view.pxPerTick);
+  drawAll();
+};
+$("btnZoomOut").onclick = () => {
+  const c = cv.width / 2;
+  const tickAt = view.startTick + c / view.pxPerTick;
+  view.pxPerTick /= 1.6;
+  view.startTick = Math.max(0, tickAt - c / view.pxPerTick);
+  drawAll();
+};
+$("btnFit").onclick = () => { fitView(); drawAll(); };
+
+function pitchRange() {
+  let lo = 60, hi = 60;
+  project.parts.forEach((p) => p.notes.forEach((n) => {
+    if (n.pitch < lo) lo = n.pitch;
+    if (n.pitch > hi) hi = n.pitch;
+  }));
+  const pad = 6;
+  return { lo: Math.max(0, lo - pad), hi: Math.min(127, hi + pad), span: Math.max(12, hi - lo + pad * 2) };
+}
+
+function tickToX(tick) { return (tick - view.startTick) * view.pxPerTick; }
+function xToTick(x) { return view.startTick + x / view.pxPerTick; }
+function yToPitch(y) {
+  const r = pitchRange();
+  return Math.round(r.hi - y / view.rowH);
+}
+function pitchToY(pitch) {
+  const r = pitchRange();
+  return (r.hi - pitch) * view.rowH;
+}
+
+/* =========================================================
+ * 描画
+ * ========================================================= */
+function drawAll() {
+  ctx.fillStyle = "#232738";
+  ctx.fillRect(0, 0, cv.width, cv.height);
+
+  const r = pitchRange();
+  const div = division();
+
+  // 行（白鍵/黒鍵）
+  for (let p = r.lo; p <= r.hi; p++) {
+    const y = Math.round(pitchToY(p));
+    const black = [1, 3, 6, 8, 10].includes(p % 12);
+    ctx.fillStyle = black ? "#1d2029" : "#232738";
+    ctx.fillRect(0, y, cv.width, view.rowH);
+    ctx.fillStyle = "#3a3f52";
+    ctx.fillRect(0, y + view.rowH - 1, cv.width, 1);
+    ctx.fillStyle = black ? "#9aa3bd" : "#6b7391";
+    ctx.font = "10px monospace";
+    ctx.fillText(MMS.noteName(p), 2, y + view.rowH - 3);
+  }
+
+  // 拍・小節線
+  const sig = project.timeSig || { num: 4, den: 4 };
+  const beatTicks = div * 4 / sig.den;
+  const barTicks = beatTicks * sig.num;
+  const x0 = Math.floor(xToTick(0) / beatTicks) * beatTicks;
+  for (let t = x0; t < xToTick(cv.width); t += beatTicks) {
+    const x = tickToX(t);
+    const isBar = t % barTicks === 0;
+    ctx.strokeStyle = isBar ? "#3f4560" : "#2c3145";
+    ctx.beginPath();
+    ctx.moveTo(x, 0);
+    ctx.lineTo(x, cv.height);
+    ctx.stroke();
+  }
+
+  // 音符
+  project.parts.forEach((part) => {
+    ctx.fillStyle = part.color || "#ff6b6b";
+    part.notes.forEach((n) => {
+      const x = tickToX(n.startTick);
+      const w = Math.max(2, n.durationTick * view.pxPerTick);
+      const y = pitchToY(n.pitch);
+      ctx.fillRect(x, y + 1, w, view.rowH - 3);
+      ctx.strokeStyle = "rgba(255,255,255,.35)";
+      ctx.strokeRect(x, y + 1, w, view.rowH - 3);
+    });
+  });
+
+  // 選択
+  if (selected) {
+    const n = selected.note;
+    const x = tickToX(n.startTick);
+    const w = Math.max(2, n.durationTick * view.pxPerTick);
+    ctx.strokeStyle = "#ffffff";
+    ctx.lineWidth = 2;
+    ctx.strokeRect(x - 1, pitchToY(n.pitch), w + 2, view.rowH - 1);
+    ctx.lineWidth = 1;
+  }
+
+  // 演奏ヘッド
+  if (playing && playStartCtx) {
+    const sec = (playStartCtx.currentTime - playStartTime) * 1000;
+    const tick = MMS.secondsToTicks(sec / 1000, project.tempoMap, division());
+    const x = tickToX(tick);
+    ctx.fillStyle = "rgba(255,255,255,.7)";
+    ctx.fillRect(x, 0, 2, cv.height);
+  }
+}
+
+/* =========================================================
+ * エディタ操作（マウス）
+ * ========================================================= */
+function hitTest(x, y) {
+  const tick = xToTick(x);
+  const pitch = yToPitch(y);
+  for (const part of project.parts) {
+    for (const n of part.notes) {
+      if (tick >= n.startTick && tick < n.startTick + Math.max(1, n.durationTick)) {
+        if (Math.abs(pitch - n.pitch) <= 0.7) return { part, note: n };
+      }
+    }
+  }
+  return null;
+}
+
+let drag = null; // {mode:'move'|'resize'|'pan', part, note, startX, startY, origTick, origPitch, origDur, origViewStart}
+
+cv.onmousedown = (e) => {
+  const rect = cv.getBoundingClientRect();
+  const x = e.clientX - rect.left;
+  const y = e.clientY - rect.top;
+  const hit = hitTest(x, y);
+  if (hit) {
+    selected = hit;
+    const isResize = x - tickToX(hit.note.startTick) > Math.max(6, hit.note.durationTick * view.pxPerTick - 6);
+    drag = {
+      mode: isResize ? "resize" : "move",
+      part: hit.part, note: hit.note,
+      startX: x, startY: y,
+      origTick: hit.note.startTick, origPitch: hit.note.pitch, origDur: hit.note.durationTick,
+      origViewStart: view.startTick
+    };
+  } else {
+    drag = { mode: "pan", origViewStart: view.startTick, startX: x };
+  }
+  e.preventDefault();
+};
+
+window.onmousemove = (e) => {
+  if (!drag) return;
+  const rect = cv.getBoundingClientRect();
+  const x = e.clientX - rect.left;
+  const y = e.clientY - rect.top;
+  if (drag.mode === "pan") {
+    const dt = (drag.startX - x) / view.pxPerTick;
+    view.startTick = Math.max(0, drag.origViewStart + dt);
+  } else if (drag.mode === "move") {
+    const dt = x - drag.startX;
+    const dp = drag.startY - y;
+    const snap = gridTicks();
+    let newTick = drag.origTick + Math.round(dt / view.pxPerTick / snap) * snap;
+    const newPitch = drag.origPitch + Math.round(dp / view.rowH);
+    drag.note.startTick = Math.max(0, newTick);
+    drag.note.pitch = Math.max(0, Math.min(127, newPitch));
+    markDirty();
+  } else if (drag.mode === "resize") {
+    const dt = x - drag.startX;
+    const snap = gridTicks();
+    const newDur = Math.max(1, drag.origDur + Math.round(dt / view.pxPerTick / snap) * snap);
+    drag.note.durationTick = newDur;
+    markDirty();
+  }
+  drawAll();
+};
+
+window.onmouseup = () => {
+  if (drag) { drag = null; drawAll(); }
+};
+
+cv.onwheel = (e) => {
+  e.preventDefault();
+  const rect = cv.getBoundingClientRect();
+  const cx = e.clientX - rect.left;
+  const tickAt = xToTick(cx);
+  const f = e.deltaY < 0 ? 1.25 : 0.8;
+  view.pxPerTick = Math.max(0.01, view.pxPerTick * f);
+  view.startTick = Math.max(0, tickAt - cx / view.pxPerTick);
+  drawAll();
+};
+
+cv.ondblclick = (e) => {
+  const rect = cv.getBoundingClientRect();
+  const x = e.clientX - rect.left;
+  const y = e.clientY - rect.top;
+  const pitch = yToPitch(y);
+  const snap = gridTicks();
+  const tick = Math.max(0, Math.round(xToTick(x) / snap) * snap);
+  if (pitch < 0 || pitch > 127) return;
+  const part = project.parts[0];
+  const note = { pitch: pitch, startTick: tick, durationTick: division() * 2, velocity: 90 };
+  part.notes.push(note);
+  part.notes.sort((a, b) => a.startTick - b.startTick || a.pitch - b.pitch);
+  selected = { part: part, note: note };
+  if (tick + note.durationTick > project.totalTicks) project.totalTicks = tick + note.durationTick;
+  markDirty();
+  drawAll();
+  refreshNotePanel();
+};
+
+document.addEventListener("keydown", (e) => {
+  if (e.target.tagName === "INPUT" || e.target.tagName === "SELECT" || e.target.tagName === "TEXTAREA") return;
+  if ((e.key === "Delete" || e.key === "Backspace") && selected) {
+    const idx = selected.part.notes.indexOf(selected.note);
+    if (idx >= 0) selected.part.notes.splice(idx, 1);
+    selected = null;
+    markDirty();
+    drawAll();
+    refreshNotePanel();
+  }
+});
+
+/* =========================================================
+ * 音符パネル（選択中の編集・テーブル）
+ * ========================================================= */
+function refreshPartSelect() {
+  const sel = $("selPart");
+  sel.innerHTML = "";
+  project.parts.forEach((p, i) => {
+    const o = document.createElement("option");
+    o.value = i;
+    o.textContent = p.name;
+    sel.appendChild(o);
+  });
+}
+
+function refreshNotePanel() {
+  refreshPartSelect();
+  const table = $("noteTable").querySelector("tbody");
+  table.innerHTML = "";
+  project.parts.forEach((part, pi) => {
+    part.notes.forEach((n, ni) => {
+      const tr = document.createElement("tr");
+      const isSel = selected && selected.part === part && selected.note === n;
+      if (isSel) tr.className = "selected";
+      const sec = MMS.ticksToSeconds(n.startTick, project.tempoMap, division());
+      const html = `<td>${ni + 1}</td><td>${part.name}</td><td>${MMS.noteName(n.pitch)}</td><td>${n.startTick}</td><td>${sec.toFixed(3)}</td><td>${n.durationTick}</td><td>${n.velocity}</td>`;
+      tr.innerHTML = html;
+      tr.onclick = () => {
+        selected = { part: part, note: n };
+        syncPanelFromSelection();
+        drawAll();
+      };
+      table.appendChild(tr);
+    });
+  });
+  syncPanelFromSelection();
+}
+
+function syncPanelFromSelection() {
+  if (!selected) {
+    $("selPart").value = "0";
+    $("selPitch").value = 60;
+    $("selPitchName").textContent = MMS.noteName(60);
+    $("selStart").value = "0";
+    $("selLen").value = division() * 2;
+    return;
+  }
+  const { part, note } = selected;
+  $("selPart").value = String(project.parts.indexOf(part));
+  $("selPitch").value = note.pitch;
+  $("selPitchName").textContent = MMS.noteName(note.pitch);
+  $("selStart").value = MMS.ticksToSeconds(note.startTick, project.tempoMap, division()).toFixed(3);
+  $("selLen").value = note.durationTick;
+}
+
+function onNoteFieldChange() {
+  if (!selected) return;
+  const { part, note } = selected;
+  note.pitch = Math.max(0, Math.min(127, +$("selPitch").value || 0));
+  note.durationTick = Math.max(1, +$("selLen").value || 1);
+  const sec = +$("selStart").value || 0;
+  note.startTick = Math.max(0, MMS.secondsToTicks(sec, project.tempoMap, division()));
+  markDirty();
+  drawAll();
+  refreshNotePanel();
+}
+$("selPitch").onchange = onNoteFieldChange;
+$("selStart").onchange = onNoteFieldChange;
+$("selLen").onchange = onNoteFieldChange;
+$("selPart").onchange = () => {
+  if (!selected) return;
+  const idx = +$("selPart").value;
+  const oldPart = selected.part;
+  const i = oldPart.notes.indexOf(selected.note);
+  oldPart.notes.splice(i, 1);
+  project.parts[idx].notes.push(selected.note);
+  selected.part = project.parts[idx];
+  markDirty();
+  drawAll();
+  refreshNotePanel();
+};
+
+$("btnAddNote").onclick = () => {
+  const part = project.parts[0];
+  const note = { pitch: 60, startTick: project.totalTicks, durationTick: division() * 2, velocity: 90 };
+  part.notes.push(note);
+  selected = { part: part, note: note };
+  project.totalTicks += note.durationTick;
+  markDirty();
+  drawAll();
+  refreshNotePanel();
+};
+$("btnDupNote").onclick = () => {
+  if (!selected) return;
+  const copy = Object.assign({}, selected.note);
+  copy.startTick += copy.durationTick;
+  selected.part.notes.push(copy);
+  selected.part.notes.sort((a, b) => a.startTick - b.startTick);
+  markDirty();
+  drawAll();
+  refreshNotePanel();
+};
+$("btnDelNote").onclick = () => {
+  if (!selected) return;
+  const i = selected.part.notes.indexOf(selected.note);
+  if (i >= 0) selected.part.notes.splice(i, 1);
+  selected = null;
+  markDirty();
+  drawAll();
+  refreshNotePanel();
+};
+$("btnQuantize").onclick = () => {
+  const snap = gridTicks();
+  project.parts.forEach((part) => part.notes.forEach((n) => {
+    n.startTick = Math.max(0, Math.round(n.startTick / snap) * snap);
+  }));
+  markDirty();
+  drawAll();
+  refreshNotePanel();
+  setStatus("全音符をグリッドに整列しました");
+};
+
+/* =========================================================
+ * 試聴（Web Audio）
+ * ========================================================= */
+let audioCtx = null;
+let playing = false;
+let playStartTime = 0;
+let playStartCtx = null;
+let playSources = [];
+
+function ensureAudio() {
+  if (!audioCtx) audioCtx = new (window.AudioContext || window.webkitAudioContext)();
+  if (audioCtx.state === "suspended") audioCtx.resume();
+  return audioCtx;
+}
+
+$("btnPlay").onclick = () => {
+  if (playing) return;
+  const ac = ensureAudio();
+  const now = ac.currentTime + 0.1;
+  const div = division();
+  const all = [];
+  project.parts.forEach((part) => part.notes.forEach((n) => {
+    const s = MMS.ticksToSeconds(n.startTick, project.tempoMap, div);
+    const d = Math.max(0.15, MMS.ticksToSeconds(n.durationTick, project.tempoMap, div));
+    all.push({ s, d, pitch: n.pitch, v: n.velocity });
+  }));
+  all.sort((a, b) => a.s - b.s);
+  playSources = [];
+  all.forEach((n) => {
+    const osc = ac.createOscillator();
+    const gain = ac.createGain();
+    osc.type = "triangle";
+    osc.frequency.value = MMS.noteToHz(n.pitch);
+    const g = 0.03 + (n.v / 127) * 0.05;
+    gain.gain.setValueAtTime(0.0001, now + n.s);
+    gain.gain.exponentialRampToValueAtTime(g, now + n.s + 0.02);
+    gain.gain.exponentialRampToValueAtTime(0.0001, now + n.s + Math.max(0.1, n.d));
+    osc.connect(gain).connect(ac.destination);
+    osc.start(now + n.s);
+    osc.stop(now + n.s + Math.max(0.1, n.d) + 0.1);
+    playSources.push(osc);
+  });
+  playing = true;
+  playStartTime = ac.currentTime;
+  playStartCtx = ac;
+  $("btnPlay").textContent = "▶ 再生中";
+  drawAll();
+};
+
+$("btnStop").onclick = () => {
+  if (!playing) return;
+  playSources.forEach((o) => { try { o.stop(); } catch (e) {} });
+  playSources = [];
+  playing = false;
+  $("btnPlay").textContent = "▶ 再生";
+  drawAll();
+};
+
+/* =========================================================
+ * 音色設定タブ
+ * ========================================================= */
+function refreshPartList() {
+  const list = $("partList");
+  list.innerHTML = "";
+  project.parts.forEach((part, i) => {
+    const row = document.createElement("div");
+    row.className = "part-row";
+    const name = document.createElement("input");
+    name.type = "text";
+    name.value = part.name;
+    name.onchange = () => { part.name = name.value || part.name; markDirty(); };
+    const sound = document.createElement("input");
+    sound.type = "text";
+    sound.value = part.sound;
+    sound.onchange = () => { part.sound = sound.value || part.sound; markDirty(); };
+    const root = document.createElement("input");
+    root.type = "number";
+    root.min = 0; root.max = 127;
+    root.value = part.rootNote;
+    root.style.width = "70px";
+    root.onchange = () => { part.rootNote = Math.max(0, Math.min(127, +root.value || 60)); markDirty(); };
+    const color = document.createElement("input");
+    color.type = "color";
+    color.value = part.color;
+    color.onchange = () => { part.color = color.value; markDirty(); drawAll(); };
+    const del = document.createElement("button");
+    del.className = "btn small";
+    del.textContent = "削除";
+    del.onclick = () => {
+      if (project.parts.length <= 1) return;
+      project.parts.splice(i, 1);
+      selected = null;
+      markDirty();
+      drawAll();
+      refreshPartList();
+    };
+    row.append(name, sound, root, color, del);
+    list.appendChild(row);
+  });
+}
+
+/* =========================================================
+ * 出力タブ
+ * ========================================================= */
+let lastBuild = null;
+
+function settingsFromUI() {
+  return {
+    transpose: +$("cfgTranspose").value || 0,
+    minLengthMs: Math.max(0, +$("cfgMinLen").value || 0),
+    minPitch: Math.max(0, Math.min(127, +$("cfgMinPitch").value || 0)),
+    maxPitch: Math.max(0, Math.min(127, +$("cfgMaxPitch").value || 127)),
+    loop: $("cfgLoop").value === "1"
+  };
+}
+
+function buildPacks() {
+  const settings = settingsFromUI();
+  const name = slug(project.name || "MySong");
+  const funcs = MMS.buildMcfunctions(project, settings);
+  const r = funcs.summary;
+  const warnings = [];
+
+  project.parts.forEach((p) => {
+    if (!/^[a-z0-9_.]+$/.test(p.sound)) warnings.push("サウンド名に使えない文字があります: " + p.sound + "（小文字英数字と._のみ）");
+  });
+
+  const rpReadme =
+    "# サンプル音源の配置方法\n\n" +
+    "このフォルダに、各パートで設定したサウンド名の音源ファイルを配置してください。\n\n" +
+    project.parts.map((p) => {
+      const base = p.sound.replace(/^.*\./, "");
+      return "必要: " + base + ".ogg（または " + base + ".wav） → " + p.sound;
+    }).join("\n") +
+    "\n\n例: sounds/melody.ogg のようにファイル名をサウンド名の最後の部分に合わせてください。\n" +
+    "長い音は .ogg 推奨（stream設定済み）。\n";
+
+  const rootReadme =
+    "# " + (project.name || "MySong") + " - 使い方\n\n" +
+    "## インストール手順（iPhone）\n" +
+    "1. このZIPを解凍し、RPフォルダとBPフォルダを .mcpack 形式にリネーム（例: MySong_RP.mcpack）\n" +
+    "2. 各ファイルをiPhoneに送る（AirDrop / メール等）\n" +
+    "3. ファイルを開くとMinecraftに取り込まれます\n" +
+    "4. ワールドの設定で「リソースパック」「ビヘイビアパック」の両方を適用\n\n" +
+    "## 使い方\n" +
+    "1. ワールドに入って最初に一度: /function play/setup\n" +
+    "2. 演奏開始: /function play/start\n" +
+    "3. 停止: /function play/stop\n\n" +
+    "※ サンプル音源を RP/sounds/ に配置しないと無音になります\n";
+
+  const files = [
+    { name: name + "_RP/manifest.json", data: MMS.buildManifest("resources", name) },
+    { name: name + "_RP/sounds.json", data: MMS.buildSoundsJson(project) },
+    { name: name + "_RP/sounds/README.txt", data: rpReadme },
+    { name: name + "_BP/manifest.json", data: MMS.buildManifest("data", name) },
+    { name: name + "_BP/functions/play/setup.mcfunction", data: funcs.setup },
+    { name: name + "_BP/functions/play/start.mcfunction", data: funcs.start },
+    { name: name + "_BP/functions/play/stop.mcfunction", data: funcs.stop },
+    { name: name + "_BP/functions/play/tick.mcfunction", data: funcs.tick },
+    { name: name + "_BP/tick.json", data: JSON.stringify({ tick: "play/tick" }, null, 2) },
+    { name: "README-使い方.txt", data: rootReadme }
+  ];
+
+  const noteCount = project.parts.reduce((s, p) => s + p.notes.length, 0);
+  const summary =
+    "パート数: " + project.parts.length +
+    " / 音符数: " + noteCount +
+    " / 変換後のコマンド数: " + r.events.length +
+    " / 曲長: " + MMS.formatSeconds(r.durationSec) +
+    " / 最終tick: " + r.lastTick;
+
+  return { files, summary, warnings: warnings.concat(r.warnings) };
+}
+
+$("btnBuild").onclick = () => {
+  lastBuild = buildPacks();
+  $("exportSummary").textContent = lastBuild.summary;
+  $("warnings").textContent = lastBuild.warnings.length ? "⚠ 警告:\n" + lastBuild.warnings.join("\n") : "✓ 変換に問題はありませんでした";
+  $("errors").textContent = "";
+  // ファイルタブ
+  const tabs = $("fileTabs");
+  tabs.innerHTML = "";
+  lastBuild.files.forEach((f, i) => {
+    const t = document.createElement("button");
+    t.className = "file-tab" + (i === 0 ? " active" : "");
+    t.textContent = f.name;
+    t.onclick = () => {
+      [...tabs.children].forEach((c) => c.classList.remove("active"));
+      t.classList.add("active");
+      $("fileView").value = f.data;
+    };
+    tabs.appendChild(t);
+  });
+  $("fileView").value = lastBuild.files[0].data;
+};
+
+$("btnZip").onclick = () => {
+  if (!lastBuild) lastBuild = buildPacks();
+  const zip = MMS.buildZip(lastBuild.files);
+  downloadBlob(slug(project.name || "MySong") + "_addon.zip", zip);
+};
+
+/* =========================================================
+ * タブ切り替え・共通
+ * ========================================================= */
+document.querySelectorAll(".tab").forEach((t) => {
+  t.onclick = () => {
+    document.querySelectorAll(".tab").forEach((x) => x.classList.remove("active"));
+    t.classList.add("active");
+    document.querySelectorAll("main > section").forEach((s) => s.classList.add("hidden"));
+    $("tab-" + t.dataset.tab).classList.remove("hidden");
+    if (t.dataset.tab === "editor") drawAll();
+    if (t.dataset.tab === "sounds") refreshPartList();
+  };
+});
+
+let statusTimer = null;
+function setStatus(msg) {
+  $("status").textContent = msg;
+  clearTimeout(statusTimer);
+  statusTimer = setTimeout(() => { $("status").textContent = ""; }, 8000);
+}
+
+function markDirty() {
+  autosave();
+  // 曲の長さを再計算
+  let maxT = 0;
+  project.parts.forEach((p) => p.notes.forEach((n) => {
+    if (n.startTick + n.durationTick > maxT) maxT = n.startTick + n.durationTick;
+  }));
+  project.totalTicks = maxT;
+}
+
+// 初期表示
+$("projectName").onchange = () => { project.name = $("projectName").value || "MySong"; markDirty(); };
+refreshNotePanel();
+drawAll();
+</script>
+</body>
+</html>
