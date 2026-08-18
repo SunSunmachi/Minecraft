@@ -18,6 +18,7 @@
   .btn { background: var(--panel2); color: var(--text); border: 1px solid var(--line); border-radius: 8px; padding: 8px 14px; cursor: pointer; font-size: 13px; min-height: 38px; }
   .btn:hover { border-color: var(--accent); }
   .btn.primary { background: var(--accent); border-color: var(--accent); color: #fff; font-weight: 600; }
+  .btn.tool.active { border-color: var(--accent); background: rgba(91,140,255,.15); color: #fff; }
   .btn.small { padding: 4px 10px; font-size: 12px; min-height: 30px; }
   input[type=text], input[type=number], select { background: var(--panel2); color: var(--text); border: 1px solid var(--line); border-radius: 8px; padding: 7px 10px; font-size: 13px; }
   input[type=color] { width: 40px; height: 32px; border: 1px solid var(--line); border-radius: 8px; background: none; padding: 2px; }
@@ -109,7 +110,11 @@
         <span>音符 <b id="metaNotes">0</b></span>
       </div>
       <span class="grow" style="flex:1"></span>
-      <select id="gridSel" title="スナップのグリッド">
+      <button class="btn tool active" id="btnToolSelect" title="選択/編集モード（ダブルタップで音符追加）">選択</button>
+      <button class="btn tool" id="btnToolPen" title="音符追加モード（タップで音符追加）">✏️ 音符追加</button>
+      <button class="btn" id="btnUndo" title="1つ前の操作に戻す">↩ 戻す</button>
+      <select id="gridSel" title="スナップのグリッド（画面の縦線）">
+        <option value="0">なし（フリー）</option>
         <option value="4">1/4音符</option>
         <option value="8">1/8音符</option>
         <option value="16" selected>1/16音符</option>
@@ -124,7 +129,7 @@
     <div id="status"></div>
     <div id="canvasWrap"><canvas id="cv" width="900" height="560"></canvas></div>
     <div id="hint">
-      🖱 ダブルクリック / 📱 ダブルタップ：音符を追加 ／ ドラッグ：音符を移動（右端で長さ変更） ／ 空白ドラッグ：スクロール ／ ホイール：ズーム ／ Delete：削除
+      🖱 / 📱 ドラッグ：音符を移動（右端で長さ変更）・空白でスクロール ／ ✏️追加モード：タップで音符追加（選択モードはダブルタップ）／ 2本指ピンチ or ホイール：ズーム ／ Delete：削除 ／ ↩ 戻す：取り消し
     </div>
 
     <div class="panel">
@@ -230,7 +235,7 @@ let selected = null; // {part, note}
 const gridSel = document.getElementById("gridSel");
 const cv = document.getElementById("cv");
 const ctx = cv.getContext("2d");
-const view = { pxPerTick: 0.15, startTick: 0, rowH: 16 };
+const view = { pxPerTick: 0.15, startTick: 0, rowH: 18 };
 const GUTTER = 48; // 左の音名カラム幅
 
 const $ = (id) => document.getElementById(id);
@@ -359,6 +364,7 @@ function autosave() {
 function division() { return project.division || 480; }
 function gridTicks() {
   const d = +gridSel.value;
+  if (!d) return 0; // 「なし（フリー）」
   return Math.max(1, Math.round((division() * 4) / d));
 }
 function visibleTicks() {
@@ -439,6 +445,24 @@ function drawAll() {
     ctx.fillStyle = black ? "#9aa3bd" : (isC ? "#c8d2ff" : "#6b7391");
     ctx.font = "11px monospace";
     ctx.fillText(MMS.noteName(p), 4, y + view.rowH - 5);
+  }
+
+  // スナップグリッド線（「何分音符」で選んだ分解能を薄い線で表示）
+  const snap = gridTicks();
+  const snapPx = snap * view.pxPerTick;
+  const beatPx = beatTicks * view.pxPerTick;
+  if (snap > 0 && snapPx >= 6 && snapPx < beatPx) {
+    ctx.strokeStyle = "#2b3048";
+    ctx.lineWidth = 1;
+    const sg0 = Math.floor(xToTick(GUTTER) / snap) * snap;
+    for (let t = sg0; t < xToTick(cv.width); t += snap) {
+      if (t % beatTicks === 0) continue;
+      const x = Math.round(tickToX(t)) + 0.5;
+      ctx.beginPath();
+      ctx.moveTo(x, 0);
+      ctx.lineTo(x, cv.height);
+      ctx.stroke();
+    }
   }
 
   // 小節線・拍線
@@ -523,6 +547,36 @@ function hitTest(x, y) {
 
 let drag = null; // {mode, hit, ...}
 let lastTapTime = 0;
+let tool = "select";
+let pointers = {}; // ピンチズーム用（アクティブなポインター位置）
+let pinch = null;
+
+function setTool(t) {
+  tool = t;
+  $("btnToolSelect").classList.toggle("active", t === "select");
+  $("btnToolPen").classList.toggle("active", t === "pen");
+  setStatus(t === "pen" ? "✏️ 追加モード: タップで音符を追加します" : "選択モード: ドラッグで移動・ダブルタップで追加");
+}
+$("btnToolSelect").onclick = () => setTool("select");
+$("btnToolPen").onclick = () => setTool("pen");
+
+/* ---- undo（操作を取り消す） ---- */
+const undoStack = [];
+const MAX_UNDO = 60;
+function snapshot() {
+  undoStack.push(JSON.stringify(project));
+  if (undoStack.length > MAX_UNDO) undoStack.shift();
+}
+$("btnUndo").onclick = () => {
+  if (!undoStack.length) { setStatus("戻せる操作がありません"); return; }
+  project = JSON.parse(undoStack.pop());
+  selected = null;
+  $("projectName").value = project.name || "MySong";
+  markDirty();
+  refreshNotePanel();
+  drawAll();
+  setStatus("1つ前の操作に戻しました");
+};
 
 function canvasPos(e) {
   const rect = cv.getBoundingClientRect();
@@ -533,9 +587,24 @@ cv.addEventListener("pointerdown", (e) => {
   e.preventDefault();
   try { cv.setPointerCapture(e.pointerId); } catch (err) {}
   const { x, y } = canvasPos(e);
+  pointers[e.pointerId] = { x, y };
+  const ids = Object.keys(pointers);
+  if (ids.length === 2) {
+    // 2本目の指: ピンチズーム開始
+    drag = null;
+    const p1 = pointers[ids[0]], p2 = pointers[ids[1]];
+    pinch = {
+      dist: Math.hypot(p2.x - p1.x, p2.y - p1.y),
+      cx: (p1.x + p2.x) / 2,
+      tickAt: xToTick((p1.x + p2.x) / 2),
+      pxPerTick: view.pxPerTick
+    };
+    return;
+  }
   const hit = hitTest(x, y);
   if (hit) {
     selected = hit;
+    snapshot();
     const isResize = x - tickToX(hit.note.startTick) > Math.max(8, hit.note.durationTick * view.pxPerTick - 8);
     drag = {
       mode: isResize ? "resize" : "move",
@@ -550,9 +619,21 @@ cv.addEventListener("pointerdown", (e) => {
 });
 
 cv.addEventListener("pointermove", (e) => {
-  if (!drag) return;
   e.preventDefault();
+  if (!pointers[e.pointerId]) return;
   const { x, y } = canvasPos(e);
+  pointers[e.pointerId] = { x, y };
+  const ids = Object.keys(pointers);
+  if (pinch && ids.length === 2) {
+    const p1 = pointers[ids[0]], p2 = pointers[ids[1]];
+    const dist = Math.hypot(p2.x - p1.x, p2.y - p1.y);
+    const cx = (p1.x + p2.x) / 2;
+    view.pxPerTick = Math.max(0.005, Math.min(5, pinch.pxPerTick * (dist / Math.max(1, pinch.dist))));
+    view.startTick = Math.max(0, pinch.tickAt - (cx - GUTTER) / view.pxPerTick);
+    drawAll();
+    return;
+  }
+  if (!drag) return;
   drag.moved = Math.max(drag.moved, Math.abs(x - drag.startX), Math.abs(y - drag.startY));
   if (drag.mode === "pan") {
     const dt = (drag.startX - x) / view.pxPerTick;
@@ -561,28 +642,42 @@ cv.addEventListener("pointermove", (e) => {
     const dt = x - drag.startX;
     const dp = drag.startY - y;
     const snap = gridTicks();
-    drag.note.startTick = Math.max(0, drag.origTick + Math.round(dt / view.pxPerTick / snap) * snap);
+    const target = drag.origTick + dt / view.pxPerTick;
+    drag.note.startTick = snap > 0
+      ? Math.max(0, Math.round(target / snap) * snap)
+      : Math.max(0, Math.round(target));
     drag.note.pitch = Math.max(0, Math.min(127, drag.origPitch + Math.round(dp / view.rowH)));
     markDirty();
   } else if (drag.mode === "resize") {
     const dt = x - drag.startX;
     const snap = gridTicks();
-    drag.note.durationTick = Math.max(1, drag.origDur + Math.round(dt / view.pxPerTick / snap) * snap);
+    drag.note.durationTick = snap > 0
+      ? Math.max(1, drag.origDur + Math.round(dt / view.pxPerTick / snap) * snap)
+      : Math.max(1, Math.round(drag.origDur + dt / view.pxPerTick));
     markDirty();
   }
   drawAll();
 });
 
 cv.addEventListener("pointerup", (e) => {
+  delete pointers[e.pointerId];
+  if (pinch) {
+    if (Object.keys(pointers).length < 2) pinch = null;
+    return;
+  }
   if (!drag) return;
   const wasTap = drag.moved < 8 && (performance.now() - drag.downTime) < 350;
   const wasHit = drag.hit;
   drag = null;
   if (wasTap && !wasHit) {
-    // タップ判定：2回連続で音符追加（マウスダブルクリック / タッチダブルタップ両対応）
+    const { x, y } = canvasPos(e);
+    if (tool === "pen") {
+      addNoteAt(x, y);
+      return;
+    }
+    // 選択モード: 2回連続タップで音符追加（マウスダブルクリック / タッチダブルタップ両対応）
     const now = performance.now();
     if (now - lastTapTime < 400) {
-      const { x, y } = canvasPos(e);
       addNoteAt(x, y);
       lastTapTime = 0;
     } else {
@@ -591,6 +686,12 @@ cv.addEventListener("pointerup", (e) => {
   }
   if (selected) refreshNotePanel();
   drawAll();
+});
+
+cv.addEventListener("pointercancel", (e) => {
+  delete pointers[e.pointerId];
+  pinch = null;
+  drag = null;
 });
 
 cv.addEventListener("wheel", (e) => {
@@ -607,11 +708,13 @@ cv.addEventListener("wheel", (e) => {
 function addNoteAt(x, y) {
   const pitch = yToPitch(y);
   const snap = gridTicks();
-  const tick = Math.max(0, Math.round(xToTick(x) / snap) * snap);
+  const rawTick = xToTick(x);
+  const tick = snap > 0 ? Math.max(0, Math.round(rawTick / snap) * snap) : Math.max(0, Math.round(rawTick));
   if (pitch < 0 || pitch > 127) return;
   const partIdx = +$("selPart").value || 0;
   const part = project.parts[Math.min(partIdx, project.parts.length - 1)];
   const note = { pitch: pitch, startTick: tick, durationTick: division() * 2, velocity: 90 };
+  snapshot();
   part.notes.push(note);
   part.notes.sort((a, b) => a.startTick - b.startTick || a.pitch - b.pitch);
   selected = { part: part, note: note };
@@ -625,7 +728,10 @@ document.addEventListener("keydown", (e) => {
   if (e.target.tagName === "INPUT" || e.target.tagName === "SELECT" || e.target.tagName === "TEXTAREA") return;
   if ((e.key === "Delete" || e.key === "Backspace") && selected) {
     const idx = selected.part.notes.indexOf(selected.note);
-    if (idx >= 0) selected.part.notes.splice(idx, 1);
+    if (idx >= 0) {
+      snapshot();
+      selected.part.notes.splice(idx, 1);
+    }
     selected = null;
     markDirty();
     refreshNotePanel();
@@ -690,6 +796,7 @@ function syncPanelFromSelection() {
 
 function onNoteFieldChange() {
   if (!selected) return;
+  snapshot();
   const { part, note } = selected;
   note.pitch = Math.max(0, Math.min(127, +$("selPitch").value || 0));
   note.durationTick = Math.max(1, +$("selLen").value || 1);
@@ -707,6 +814,7 @@ $("selPart").onchange = () => {
   const idx = +$("selPart").value;
   const oldPart = selected.part;
   const i = oldPart.notes.indexOf(selected.note);
+  snapshot();
   oldPart.notes.splice(i, 1);
   project.parts[idx].notes.push(selected.note);
   selected.part = project.parts[idx];
@@ -718,6 +826,7 @@ $("selPart").onchange = () => {
 $("btnAddNote").onclick = () => {
   const part = project.parts[0];
   const note = { pitch: 60, startTick: project.totalTicks, durationTick: division() * 2, velocity: 90 };
+  snapshot();
   part.notes.push(note);
   selected = { part: part, note: note };
   project.totalTicks += note.durationTick;
@@ -727,6 +836,7 @@ $("btnAddNote").onclick = () => {
 };
 $("btnDupNote").onclick = () => {
   if (!selected) return;
+  snapshot();
   const copy = Object.assign({}, selected.note);
   copy.startTick += copy.durationTick;
   selected.part.notes.push(copy);
@@ -738,7 +848,9 @@ $("btnDupNote").onclick = () => {
 $("btnDelNote").onclick = () => {
   if (!selected) return;
   const i = selected.part.notes.indexOf(selected.note);
-  if (i >= 0) selected.part.notes.splice(i, 1);
+  if (i < 0) return;
+  snapshot();
+  selected.part.notes.splice(i, 1);
   selected = null;
   markDirty();
   refreshNotePanel();
@@ -746,6 +858,8 @@ $("btnDelNote").onclick = () => {
 };
 $("btnQuantize").onclick = () => {
   const snap = gridTicks();
+  if (snap <= 0) { setStatus("グリッドが「なし」なので整列しませんでした"); return; }
+  snapshot();
   project.parts.forEach((part) => part.notes.forEach((n) => {
     n.startTick = Math.max(0, Math.round(n.startTick / snap) * snap);
   }));

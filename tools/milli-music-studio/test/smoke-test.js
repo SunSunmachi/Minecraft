@@ -27,9 +27,16 @@ function makeCtx() {
 const elements = {};
 function makeElement(id) {
   if (elements[id]) return elements[id];
+  const cls = {
+    _s: new Set(),
+    add(c) { this._s.add(c); },
+    remove(c) { this._s.delete(c); },
+    contains(c) { return this._s.has(c); },
+    toggle(c, force) { const on = force !== undefined ? !!force : !this._s.has(c); on ? this._s.add(c) : this._s.delete(c); return on; },
+  };
   const el = {
     id,
-    value: "",
+    value: id === "gridSel" ? "16" : "",
     textContent: "",
     innerHTML: "",
     className: "",
@@ -42,7 +49,7 @@ function makeElement(id) {
     appendChild(c) { this.children.push(c); return c; },
     querySelector() { return makeElement("query-" + Math.random()); },
     querySelectorAll() { return []; },
-    classList: { add() {}, remove() {}, contains() { return false; } },
+    classList: cls,
     dataset: {},
     addEventListener() {},
     setAttribute() {},
@@ -104,6 +111,21 @@ const testCode = `
     $("btnStop").onclick();
     check("停止で再生ボタンが戻る", $("btnPlay").textContent === "▶ 再生", $("btnPlay").textContent);
     check("停止後に時間表示リセット", $("playTime").textContent.indexOf("0:00 /") === 0, $("playTime").textContent);
+
+    // 新機能: グリッド「なし」/ ペンモード / undo
+    check("グリッド初期値は1/16音符(120tick)", gridTicks() === 120);
+    gridSel.value = "0";
+    check("グリッド「なし」でスナップ0", gridTicks() === 0);
+    gridSel.value = "16";
+    setTool("pen");
+    check("ペンモード切替", tool === "pen" && $("btnToolPen").classList.contains("active"));
+    setTool("select");
+    check("選択モードへ戻る", tool === "select");
+    const beforeUndo = project.parts[0].notes.length;
+    addNoteAt(220, 120);
+    check("undo前は音符が増える", project.parts[0].notes.length === beforeUndo + 1);
+    $("btnUndo").onclick();
+    check("undoで1つ前の状態に戻る", project.parts[0].notes.length === beforeUndo);
 
     refreshPartList();
     check("パートリスト描画（例外なし）", true);
